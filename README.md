@@ -86,9 +86,14 @@ Everything the container manages is located under the **container's** `/data` pa
 
 ### Attaching data directory to host filesystem
 
-In most cases the easier way to persist and work with the minecraft data files is to use the `-v` argument to map a directory on your host machine to the container's `/data` directory, such as the following where `/home/user/minecraft-data` would be a directory of your choosing on your host machine:
+In most cases the easiest way to persist and work with the minecraft data files is to use the [volume mounting](https://docs.docker.com/storage/volumes/) `-v` argument to map a directory on your host machine to the container's `/data` directory. In the following example, the path `/home/user/minecraft-data` **must be** a directory on your host machine:
 
-    docker run -d -v /home/user/minecraft-data:/data ...
+    -v /home/user/minecraft-data:/data
+       ------------------------- -----
+        |                         |
+        |                         +-- must always be /data
+        |
+        +-- replace with a directory on your host machine
 
 When attached in this way you can stop the server, edit the configuration under your attached directory and start the server again to pick up the new configuration.
 
@@ -160,19 +165,24 @@ the server jar remain in the `/data` directory. It is safe to remove those._
 
 ## Running Minecraft server on different Java version
 
-When using the image `itzg:/minecraft-server` without a tag, the `latest` image tag is implied from the table below. To use a different version of Java, please use an alternate tag to run your Minecraft server container.
+When using the image `itzg/minecraft-server` without a tag, the `latest` image tag is implied from the table below. To use a different version of Java, please use an alternate tag to run your Minecraft server container.
 
-| Tag name        | Java version | Linux  | JVM Type | Architecture      |
-|-----------------|-------------|--------|----------|-------------------|
-| latest          | 17          | Debian | Hotspot  | amd64,arm64,armv7 |
-| java8           | 8           | Alpine | Hotspot  | amd64             |
-| java8-multiarch | 8           | Debian | Hotspot  | amd64,arm64,armv7 |
-| java8-openj9    | 8           | Debian | OpenJ9   | amd64             |
-| java11          | 11          | Debian | Hotspot  | amd64,arm64,armv7 |
-| java11-openj9   | 11          | Debian | OpenJ9   | amd64             |
-| java17          | 17          | Ubuntu | Hotspot  | amd64,arm64,armv7 |
-| java17-openj9   | 17          | Debian | OpenJ9   | amd64             |
-| java17-alpine   | 17          | Alpine | Hotspot  | amd64             |
+| Tag name          | Java version | Linux  | JVM Type    | Architecture      |
+|-------------------|--------------|--------|-------------|-------------------|
+| latest            | 17           | Ubuntu | Hotspot     | amd64,arm64,armv7 |
+| java8             | 8            | Alpine | Hotspot     | amd64             |
+| java8-jdk         | 8            | Ubuntu | Hotspot+JDK | amd64             |
+| java8-multiarch   | 8            | Ubuntu | Hotspot     | amd64,arm64,armv7 |
+| java8-openj9      | 8            | Debian | OpenJ9      | amd64             |
+| java8-graalvm-ce  | 8            | Oracle | GraalVM CE  | amd64             |
+| java11            | 11           | Ubuntu | Hotspot     | amd64,arm64,armv7 |
+| java11-jdk        | 11           | Ubuntu | Hotspot+JDK | amd64,arm64,armv7 |
+| java11-openj9     | 11           | Debian | OpenJ9      | amd64             |
+| java17            | 17           | Ubuntu | Hotspot     | amd64,arm64,armv7 |
+| java17-jdk        | 17           | Ubuntu | Hotspot+JDK | amd64,arm64,armv7 |
+| java17-openj9     | 17           | Debian | OpenJ9      | amd64             |
+| java17-graalvm-ce | 17           | Oracle | GraalVM CE  | amd64,arm64       |
+| java17-alpine     | 17           | Alpine | Hotspot     | amd64             |
 
 For example, to use Java version 8 on any supported architecture:
 
@@ -222,11 +232,13 @@ A tool that is bundled with this image that provides health checks and metrics r
 
 A tool that is bundled with this image to provide complex, re-usable preparation operations. 
 
+### [itzg/rcon](https://github.com/itzg/docker-rcon-web-admin)
+
+An image that dockerizes [rcon-web-admin](https://github.com/rcon-web-admin/rcon-web-admin).
+
 ## Healthcheck
 
-This image contains [mc-monitor](https://github.com/itzg/mc-monitor) and uses
-its `status` command to continually check on the container's. That can be observed
-from the `STATUS` column of `docker ps`
+This image contains [mc-monitor](https://github.com/itzg/mc-monitor) and uses its `status` command to continually check on the container's. That can be observed from the `STATUS` column of `docker ps`
 
 ```
 CONTAINER ID        IMAGE               COMMAND             CREATED             STATUS                    PORTS                                 NAMES
@@ -238,6 +250,16 @@ You can also query the container's health in a script friendly way:
 ```
 > docker container inspect -f "{{.State.Health.Status}}" mc
 healthy
+```
+
+There's actually a wrapper script called `mc-health` that takes care of calling `mc-monitor status` with the correct arguments. If needing to customize the health checks parameters, such as in a compose file, then use something like the following in the service declaration:
+
+```yaml
+healthcheck:
+  test: mc-health
+  start_period: 1m
+  interval: 5s
+  retries: 20
 ```
 
 Some orchestration systems, such as Portainer, don't allow for disabling the default `HEALTHCHECK` declared by this image. In those cases you can approximate the disabling of healthchecks by setting the environment variable `DISABLE_HEALTHCHECK` to `true`.
@@ -414,18 +436,6 @@ If you have attached a host directory to the `/data` volume, then you can instal
 
 [You can also auto-download plugins using `SPIGET_RESOURCES`.](#auto-downloading-spigotmcbukkitpapermc-plugins)
 
-### Running an Airplane server
-
-An [Airplane](https://airplane.gg) server, which is "a stable, optimized, well supported 1.17 Paper fork."
-
-    -e TYPE=AIRPLANE
-
-> NOTE: The `VERSION` variable is used to select an Airplane type to download. The available options are "LATEST" and "PURPUR", both 1.17.1. Airplane does not support 1.18 -- use Paper/Pufferfish/Purpur.
-
-Extra variables:
-- `FORCE_REDOWNLOAD=false` : set to true to force the located server jar to be re-downloaded
-- `USE_FLARE_FLAGS=false` : set to true to add appropriate flags for the built-in [Flare](https://blog.airplane.gg/flare) profiler
-
 ### Running a Pufferfish server
 
 A [Pufferfish](https://github.com/pufferfish-gg/Pufferfish) server, which is "a highly optimized Paper fork designed for large servers requiring both maximum performance, stability, and "enterprise" features."
@@ -441,7 +451,7 @@ Extra variables:
 
 ### Running a Purpur server
 
-A [Purpur](https://purpur.pl3x.net/) server, which is "drop-in replacement for Paper servers designed for configurability, new fun and exciting gameplay features, and performance built on top of Airplane."
+A [Purpur](https://purpurmc.org/) server, which is "a drop-in replacement for Paper servers designed for configurability and new, fun, exciting gameplay features."
 
     -e TYPE=PURPUR
 
@@ -451,14 +461,13 @@ Extra variables:
 - `PURPUR_BUILD=LATEST` : set a specific Purpur build to use
 - `FORCE_REDOWNLOAD=false` : set to true to force the located server jar to be re-downloaded
 - `USE_FLARE_FLAGS=false` : set to true to add appropriate flags for the built-in [Flare](https://blog.airplane.gg/flare) profiler
+- `PURPUR_DOWNLOAD_URL=<url>` : set URL to download Purpur from custom URL.
 
 ### Running a Magma server
 
 A [Magma](https://magmafoundation.org/) server, which is a combination of Forge and PaperMC, can be used with
 
     -e TYPE=MAGMA
-
-By default, the "stable" channel is used, but you can set `MAGMA_CHANNEL` to "dev" to access dev channel versions.
 
 > **NOTE** there are limited base versions supported, so you will also need to  set `VERSION`, such as "1.12.2", "1.16.5", etc.
 
@@ -571,7 +580,7 @@ The following example runs the latest version of [FTB Presents Direwolf20 1.12](
 docker run -d --name mc-ftb -e EULA=TRUE \
   -e TYPE=FTBA -e FTB_MODPACK_ID=31 \
   -p 25565:25565 \
-  itzg/minecraft-server:multiarch
+  itzg/minecraft-server:java8-multiarch
 ```
 
 > Normally you will also add `-v` volume for `/data` since the mods and config are installed there along with world data.
@@ -651,7 +660,9 @@ There are optional volume paths that can be attached to supply content to be cop
 
 By default, the [environment variable processing](#replacing-variables-inside-configs) is performed on synchronized files that match the expected suffixes in `REPLACE_ENV_SUFFIXES` (by default "yml,yaml,txt,cfg,conf,properties,hjson,json,tml,toml") and are not excluded by `REPLACE_ENV_VARIABLES_EXCLUDES` and `REPLACE_ENV_VARIABLES_EXCLUDE_PATHS`. This processing can be disabled by setting `REPLACE_ENV_DURING_SYNC` to `false`.
 
-If you want old mods/plugins to be removed before the content is brought over from those attach points, then add `-e REMOVE_OLD_MODS=TRUE`. You can fine tune the removal process by specifying the `REMOVE_OLD_MODS_INCLUDE` and `REMOVE_OLD_MODS_EXCLUDE` variables. By default, everything will be removed. You can also specify the `REMOVE_OLD_MODS_DEPTH` (default is 16) variable to only delete files up to a certain level.
+If you want old mods/plugins to be removed before the content is brought over from those attach points, then add `-e REMOVE_OLD_MODS=TRUE`. You can fine tune the removal process by specifying the `REMOVE_OLD_MODS_INCLUDE` and `REMOVE_OLD_MODS_EXCLUDE` variables, which are comma separated lists of file glob patterns. If a directory is excluded, then it and all of its contents are excluded. By default, only jars are removed. 
+
+You can also specify the `REMOVE_OLD_MODS_DEPTH` (default is 16) variable to only delete files up to a certain level.
 
 For example: `-e REMOVE_OLD_MODS=TRUE -e REMOVE_OLD_MODS_INCLUDE="*.jar" -e REMOVE_OLD_MODS_DEPTH=1` will remove all old jar files that are directly inside the `plugins/` or `mods/` directory.
 
@@ -673,6 +684,20 @@ The **resource ID** can be located from the numerical part of the URL after the 
 For example, the following will auto-download the [EssentialsX](https://www.spigotmc.org/resources/essentialsx.9089/) and [Vault](https://www.spigotmc.org/resources/vault.34315/) plugins:
 
     -e SPIGET_RESOURCES=9089,34315
+
+### Auto-download mods from Modrinth
+
+[Modrinth](https://modrinth.com/) is an open source modding platform with a clean, easy to use website for finding [Fabric and Forge mods](https://modrinth.com/mods). At startup, the container will automatically locate and download the newest versions of mod files that correspond to the `TYPE` and `VERSION` in use. Older file versions downloaded previously will automatically be cleaned up.
+
+- **MODRINTH_PROJECTS** : comma separated list of project slugs (short name) or IDs. The project ID can be located in the "Technical information" section. The slug is the part of the page URL that follows `/mod/`:
+  ```
+    https://modrinth.com/mod/fabric-api
+                             ----------
+                              |
+                              +-- project slug
+  ```
+- **MODRINTH_DOWNLOAD_OPTIONAL_DEPENDENCIES**=true : required dependencies of the project will _always_ be downloaded and optional dependencies can also be downloaded by setting this to `true`
+- **MODRINTH_ALLOWED_VERSION_TYPE**=release : the version type is used to determine the newest version to use from each project. The allowed values are `release`, `beta`, `alpha`.
 
 ### Downloadable mod/plugin pack for Forge, Fabric, and Bukkit-like Servers
 
@@ -854,28 +879,30 @@ Datapacks will be placed in `/data/$LEVEL/datapacks`
 
 ### VanillaTweaks
 
-VanillaTweaks datapacks can be installed with a share code from the website UI **OR** a json file to specify packs to download and install.
+[VanillaTweaks](https://vanillatweaks.net/) datapacks, crafting tweaks, and resource packs can be installed with a share code from the website **OR** a json file to specify packs to download and install. Datapacks and crafting tweaks will be installed into the current world directory specified by `$LEVEL`. As new versions of the packs are retrieved the previous versions will automatically be cleaned up.
 
-Datapacks will be placed in `/data/$LEVEL/datapacks`
-Resourcepacks will be placed in `/data/resourcepacks`
+The share code is the part following the hash sign, as shown here:
+
+```
+https://vanillatweaks.net/share/#MGr52E
+                                 ------
+                                  |
+                                  +- share code MGr52E
+```
 
 Accepted Parameters:
 
-- `VANILLATWEAKS_FILE`
-- `VANILLATWEAKS_SHARECODE`
-- `REMOVE_OLD_VANILLATWEAKS`
-- `REMOVE_OLD_VANILLATWEAKS_DEPTH`
-- `REMOVE_OLD_VANILLATWEAKS_INCLUDE`
-- `REMOVE_OLD_VANILLATWEAKS_EXCLUDE`
+- `VANILLATWEAKS_FILE`: comma separated list of JSON VanillaTweak pack files accessible within the container
+- `VANILLATWEAKS_SHARECODE`: comma separated list of share codes
 
-Example of expected Vanillatweaks sharecode: 
+Example of expected VanillaTweaks share codes: 
   **Note**: ResourcePacks, DataPacks, and CraftingTweaks all have separate sharecodes
 
 ```yaml
 VANILLATWEAKS_SHARECODE: MGr52E,tF1zL2,LnEDwT
 ```
 
-Example of expected Vanillatweaks file format:
+Example of expected VanillaTweaks files:
 
 ```yaml
 VANILLATWEAKS_FILE: /config/vt-datapacks.json,/config/vt-craftingtweaks.json,/config/vt-resourcepacks.json
@@ -889,7 +916,7 @@ Datapacks Json:
   "packs": {
     "survival": [
       "graves",
-      "multiplayer sleep",
+      "multiplayer sleep"
     ],
     "items": ["armored elytra"]
   }
@@ -903,8 +930,7 @@ Resourcepacks Json:
     "version": "1.18",
     "packs": {
         "aesthetic": ["CherryPicking", "BlackNetherBricks", "AlternateBlockDestruction"]
-    },
-    "result": "ok"
+    }
 }
 ```
 
@@ -919,8 +945,7 @@ CraftingTweaks Json:
             "double slabs",
             "back to blocks"
         ]
-    },
-    "result": "ok"
+    }
 }
 ```
 
@@ -1169,30 +1194,9 @@ environment variable set to `false`, such as
 ### Level Type and Generator Settings
 
 By default, a standard world is generated with hills, valleys, water, etc. A different level type can
-be configured by setting `LEVEL_TYPE` to an expected type, for example
+be configured by setting `LEVEL_TYPE` to [an expected type listed here](https://minecraft.fandom.com/wiki/Server.properties#level-type).
 
-- DEFAULT
-- FLAT
-- LARGEBIOMES
-- AMPLIFIED
-- CUSTOMIZED
-- BUFFET
-- BIOMESOP (Biomes O' Plenty for 1.12 and older)
-- BIOMESOPLENTY (Biomes O' Plenty for 1.15 and above)
-
-Descriptions are available at the [gamepedia](http://minecraft.gamepedia.com/Server.properties).
-
-When using a level type of `FLAT`, `CUSTOMIZED`, and `BUFFET`, you can further configure the world generator
-by passing [custom generator settings](http://minecraft.gamepedia.com/Superflat).
-**Since generator settings usually have ;'s in them, surround the -e value with a single quote, like below.**
-
-For example (just the `-e` bits):
-
-    -e LEVEL_TYPE=flat -e 'GENERATOR_SETTINGS=3;minecraft:bedrock,3*minecraft:stone,52*minecraft:sandstone;2;'
-
-In Minecraft 1.13+ you need to pass json ([generator site](https://misode.github.io/world/)) like this (details see [here](https://github.com/itzg/docker-minecraft-server/issues/999#issuecomment-907849644)):
-
-    -e LEVEL_TYPE=flat -e 'GENERATOR_SETTINGS={"biome":"minecraft:the_void","layers":[{"block":"minecraft:bedrock","height":1},{"block":"minecraft:stone","height":10},{"block":"minecraft:dirt","height":1}],"structures":{"structures":{}}}'
+For some of the level types, `GENERATOR_SETTINGS` can be used to further customize the world generation [as described here](https://minecraft.fandom.com/wiki/Server.properties#generator-settings).
 
 ### Custom Server Resource Pack
 
@@ -1558,7 +1562,15 @@ To enable the JVM flags required to fully support the [Flare profiling suite](ht
     
     -e USE_FLARE_FLAGS=true
     
-Flare is built-in to Airplane/Pufferfish/Purpur, and is available in [plugin form](https://github.com/TECHNOVE/FlarePlugin) for other server types.
+Flare is built-in to Pufferfish/Purpur, and is available in [plugin form](https://github.com/TECHNOVE/FlarePlugin) for other server types.
+
+### Enable support for optimized SIMD operations
+
+To enable support for optimized SIMD operations, the JVM flag can be set with the following variable:
+
+    -e USE_SIMD_FLAGS=true
+
+SIMD optimized operations are supported by Pufferfish and Purpur.
 
 ### Enable timestamps in init logs
 
@@ -1687,6 +1699,8 @@ The following environment variables define the behaviour of auto-pausing:
 * `AUTOPAUSE_KNOCK_INTERFACE`, default `eth0`
   <br>Describes the interface passed to the `knockd` daemon. If the default interface does not work, run the `ifconfig` command inside the container and derive the interface receiving the incoming connection from its output. The passed interface must exist inside the container. Using the loopback interface (`lo`) does likely not yield the desired results.
 
+> To troubleshoot, add `DEBUG_AUTOPAUSE=true` to see additional output
+
 ## Autostop
 
 An option to stop the server after a specified time has been added for niche applications (e.g. billing saving on AWS Fargate). The function is incompatible with the Autopause functionality, as they basically cancel out each other.
@@ -1708,6 +1722,8 @@ The following environment variables define the behaviour of auto-stopping:
   describes the time between server start and the stopping of the server, when no client connects inbetween (read as timeout initialized)
 * `AUTOSTOP_PERIOD`, default `10` (seconds)
   describes period of the daemonized state machine, that handles the stopping of the server
+
+> To troubleshoot, add `DEBUG_AUTOSTOP=true` to see additional output
 
 ## Running on RaspberryPi
 

@@ -66,6 +66,28 @@ function isTrue() {
   return ${result}
 }
 
+function isFalse() {
+  local oldState
+  oldState=$(shopt -po xtrace)
+  shopt -u -o xtrace
+
+  local value=${1,,}
+
+  result=
+
+  case ${value} in
+  false | off)
+    result=0
+    ;;
+  *)
+    result=1
+    ;;
+  esac
+
+  eval "$oldState"
+  return ${result}
+}
+
 function isDebugging() {
   if isTrue "${DEBUG:-false}"; then
     return 0
@@ -77,7 +99,6 @@ function isDebugging() {
 function handleDebugMode() {
   if isDebugging; then
     set -x
-    extraCurlArgs=(-v)
   fi
 }
 
@@ -185,16 +206,20 @@ eula=${EULA,,}
 
 function removeOldMods {
   if [ -d "$1" ]; then
-    find "$1" -mindepth 1 -maxdepth ${REMOVE_OLD_MODS_DEPTH:-16} -wholename "${REMOVE_OLD_MODS_INCLUDE:-*}" -not -wholename "${REMOVE_OLD_MODS_EXCLUDE:-}" -delete
+    log "Removing old mods including:${REMOVE_OLD_MODS_INCLUDE} excluding:${REMOVE_OLD_MODS_EXCLUDE}"
+    mc-image-helper find \
+      --delete \
+      --type file,directory \
+      --min-depth=1 --max-depth "${REMOVE_OLD_MODS_DEPTH:-16}" \
+      --name "${REMOVE_OLD_MODS_INCLUDE:-*}" \
+      --exclude-name "${REMOVE_OLD_MODS_EXCLUDE:-}" \
+      --quiet \
+      "$1"
   fi
 }
 
 function get() {
-  local flags=()
-  if isTrue "${DEBUG_GET:-false}"; then
-    flags+=("--debug")
-  fi
-  mc-image-helper "${flags[@]}" get "$@"
+  mc-image-helper get "$@"
 }
 
 function get_silent() {
@@ -244,8 +269,11 @@ function extract() {
     application/zip)
       unzip -o -q -d "${destDir}" "${src}"
       ;;
-    application/x-tar|application/gzip|application/x-gzip|application/x-bzip2|application/zstd|application/x-zstd)
+    application/x-tar|application/gzip|application/x-gzip|application/x-bzip2)
       tar -C "${destDir}" -xf "${src}"
+      ;;
+    application/zstd|application/x-zstd)
+      tar -C "${destDir}" --use-compress-program=unzstd -xf "${src}"
       ;;
     *)
       log "ERROR: unsupported archive type: $type"
@@ -269,6 +297,8 @@ function checkSum() {
   elif [ "${distro}" == "ubuntu" ] && sha1sum -c "${sum_file}" --status 2> /dev/null; then
     return 0
   elif [ "${distro}" == "alpine" ] && sha1sum -c "${sum_file}" -s 2> /dev/null; then
+    return 0
+  elif [ "${distro}" == "ol" ] && sha1sum -c "${sum_file}" --status 2> /dev/null; then
     return 0
   else
     return 1

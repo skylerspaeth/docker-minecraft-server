@@ -1,6 +1,6 @@
 # syntax = docker/dockerfile:1.3
 
-ARG BASE_IMAGE=eclipse-temurin:17-jdk
+ARG BASE_IMAGE=eclipse-temurin:17-jre-focal
 FROM ${BASE_IMAGE}
 
 # CI system should set this to a hash or git revision of the build directory and it's contents to
@@ -39,14 +39,14 @@ RUN easy-add --var os=${TARGETOS} --var arch=${TARGETARCH}${TARGETVARIANT} \
   --from https://github.com/itzg/{{.app}}/releases/download/{{.version}}/{{.app}}_{{.version}}_{{.os}}_{{.arch}}.tar.gz
 
 RUN easy-add --var os=${TARGETOS} --var arch=${TARGETARCH}${TARGETVARIANT} \
-  --var version=1.8.0 --var app=mc-server-runner --file {{.app}} \
+  --var version=1.8.1 --var app=mc-server-runner --file {{.app}} \
   --from https://github.com/itzg/{{.app}}/releases/download/{{.version}}/{{.app}}_{{.version}}_{{.os}}_{{.arch}}.tar.gz
 
 RUN easy-add --var os=${TARGETOS} --var arch=${TARGETARCH}${TARGETVARIANT} \
   --var version=0.1.1 --var app=maven-metadata-release --file {{.app}} \
   --from https://github.com/itzg/{{.app}}/releases/download/{{.version}}/{{.app}}_{{.version}}_{{.os}}_{{.arch}}.tar.gz
 
-ARG MC_HELPER_VERSION=1.16.11
+ARG MC_HELPER_VERSION=1.20.3
 ARG MC_HELPER_BASE_URL=https://github.com/itzg/mc-image-helper/releases/download/v${MC_HELPER_VERSION}
 RUN curl -fsSL ${MC_HELPER_BASE_URL}/mc-image-helper-${MC_HELPER_VERSION}.tgz \
   | tar -C /usr/share -zxf - \
@@ -72,4 +72,4 @@ COPY --chmod=755 files/rconcmds /rconcmds
 RUN dos2unix /start* /autopause/* /autostop/* /rconcmds/*
 
 ENTRYPOINT [ "/start" ]
-HEALTHCHECK --start-period=1m CMD mc-health
+HEALTHCHECK --start-period=1m --interval=5s --retries=24 CMD mc-health

@@ -5,7 +5,7 @@ set -e -o pipefail
 : "${REMOVE_OLD_MODS:=false}"
 : "${MODS_FILE:=}"
 : "${REMOVE_OLD_MODS_DEPTH:=1} "
-: "${REMOVE_OLD_MODS_INCLUDE:=*.jar}"
+: "${REMOVE_OLD_MODS_INCLUDE:=*.jar,*-version.json}"
 sum_file=/data/.generic_pack.sum
 
 # shellcheck source=start-utils
@@ -23,28 +23,36 @@ if isTrue "${REMOVE_OLD_MODS}" && [ -z "${MODS_FILE}" ]; then
 fi
 
 # If packwiz url passed, bootstrap packwiz and update mods before other modpack processing
-if [[ "${PACKWIZ_URL}" ]]; then
+if [[ "${PACKWIZ_URL:-}" ]]; then
   # Ensure we have the latest packwiz bootstrap installer
   latestPackwiz=$(curl -fsSL https://api.github.com/repos/packwiz/packwiz-installer-bootstrap/releases/latest)
   if [[ -z "${latestPackwiz}" ]]; then
     log "WARNING: Could not retrieve Packwiz bootstrap installer release information"
   else
     isDebugging && log "Latest packwiz ${latestPackwiz}"
-    latestPackwizVer=$(echo ${latestPackwiz} | jq --raw-output '.tag_name')
-    latestPackwizUrl=$(echo ${latestPackwiz} | jq --raw-output '.assets[] | select(.name | match("packwiz-installer-bootstrap.jar")) | .url')
-    : "${PACKWIZ_JAR:=packwiz-installer-bootstrap_${latestPackwizVer}.jar}"
-    if [[ ! -e $PACKWIZ_JAR ]]; then
+    latestPackwizVer=$(echo "${latestPackwiz}" | jq --raw-output '.tag_name')
+    latestPackwizUrl=$(echo "${latestPackwiz}" | jq --raw-output '.assets[] | select(.name | match("packwiz-installer-bootstrap.jar")) | .url')
+   : "${PACKWIZ_BOOTSTRAP_JAR:=packwiz-installer-bootstrap_${latestPackwizVer}.jar}"
+   if [[ ! -e $PACKWIZ_BOOTSTRAP_JAR ]]; then
       log "Downloading Packwiz ${latestPackwizVer}"
-      curl -H "Accept:application/octet-stream" -o "$PACKWIZ_JAR" -fsSL ${latestPackwizUrl}
-      ln -sf "${PACKWIZ_JAR}" packwiz-installer-bootstrap.jar
+      if ! curl -H "Accept:application/octet-stream" -o "$PACKWIZ_BOOTSTRAP_JAR" -fsSL ${latestPackwizUrl}; then
+        log "ERROR: failed to download Packwiz bootstrap installer"
+        exit 1
+      fi
     fi
   fi
-  if [[ ! -e packwiz-installer-bootstrap.jar ]]; then
-    log "ERROR: Packwiz not available or could not be downloaded from Github!"
-    exit 1
+  log "Running packwiz installer against URL: ${PACKWIZ_URL}"
+  java -jar "${PACKWIZ_BOOTSTRAP_JAR}" -g -s server "${PACKWIZ_URL}"
+  #if bootstrap download fails, download installer manually - then run without updating
+  returnVal=$?
+  if [[ $returnVal ]]; then
+    latestPackwizInstaller=$(curl -fsSL https://api.github.com/repos/packwiz/packwiz-installer/releases/latest)
+    latestPackwizInstallerVer=$(echo "${latestPackwizInstaller}" | jq --raw-output '.tag_name')
+    latestPackwizInstallerUrl=$(echo "${latestPackwizInstaller}" | jq --raw-output '.assets[] | select(.name | match("packwiz-installer.jar")) | .url')
+    log "Packwiz couldn't update - Downloading Packwiz Installer ${latestPackwizInstallerVer}"
+    curl -H "Accept:application/octet-stream" -o "packwiz-installer.jar" -fsSL "${latestPackwizInstallerUrl}"
+    java -jar "${PACKWIZ_BOOTSTRAP_JAR}" -g -bootstrap-no-update -s server "${PACKWIZ_URL}"
   fi
-  log "Running packwiz against URL: ${PACKWIZ_URL}"
-  java -jar packwiz-installer-bootstrap.jar -g -s server "${PACKWIZ_URL}"
 fi
 
 # If supplied with a URL for a modpack (simple zip of jars), download it and unpack
@@ -185,73 +193,104 @@ case "X$EFFECTIVE_MANIFEST_FILE" in
 esac
 fi
 
-: "${GENERIC_PACKS:=${GENERIC_PACK}}"
-: "${GENERIC_PACKS_PREFIX:=}"
-: "${GENERIC_PACKS_SUFFIX:=}"
+function genericPacks() {
+  : "${GENERIC_PACKS:=${GENERIC_PACK}}"
+  : "${GENERIC_PACKS_PREFIX:=}"
+  : "${GENERIC_PACKS_SUFFIX:=}"
 
-if [[ "${GENERIC_PACKS}" ]]; then
-  IFS=',' read -ra packs <<< "${GENERIC_PACKS}"
+  if [[ "${GENERIC_PACKS}" ]]; then
+    IFS=',' read -ra packs <<< "${GENERIC_PACKS}"
 
-  packFiles=()
-  for packEntry in "${packs[@]}"; do
-    pack="${GENERIC_PACKS_PREFIX}${packEntry}${GENERIC_PACKS_SUFFIX}"
-    if isURL "${pack}"; then
-      mkdir -p /data/packs
-      log "Downloading generic pack from $pack"
-      if ! outfile=$(get -o /data/packs --output-filename --skip-up-to-date "$pack"); then
-        log "ERROR: failed to download $pack"
-        exit 2
+    packFiles=()
+    for packEntry in "${packs[@]}"; do
+      pack="${GENERIC_PACKS_PREFIX}${packEntry}${GENERIC_PACKS_SUFFIX}"
+      if isURL "${pack}"; then
+        mkdir -p /data/packs
+        log "Downloading generic pack from $pack"
+        if ! outfile=$(get -o /data/packs --output-filename --skip-up-to-date "$pack"); then
+          log "ERROR: failed to download $pack"
+          exit 2
+        fi
+        packFiles+=("$outfile")
+      else
+        packFiles+=("$pack")
       fi
-      packFiles+=("$outfile")
-    else
-      packFiles+=("$pack")
-    fi
-  done
-
-  isDebugging && [ -f "$sum_file}" ] && cat "$sum_file"
-
-  log "Checking if generic packs are up to date"
-  if isTrue "${SKIP_GENERIC_PACK_UPDATE_CHECK:-false}" && [ -f "$sum_file" ]; then
-    log "Skipping generic pack update check"
-  elif isTrue "${FORCE_GENERIC_PACK_UPDATE}" || ! checkSum "${sum_file}"; then
-    log "Generic pack(s) are out of date. Re-applying..."
-
-    base_dir=/tmp/generic_pack_base
-    mkdir -p ${base_dir}
-    for pack in "${packFiles[@]}"; do
-      isDebugging && ls -l "${pack}"
-      extract "${pack}" "${base_dir}"
     done
 
-    # recalculate the actual base directory of content
-    base_dir=$(find "$base_dir" -type d \( -name mods -o -name plugins -o -name config \) -printf '%h' -quit)
-    if [[ ! $base_dir ]]; then
-      log "ERROR: Unable to find content base of generic packs ${GENERIC_PACKS}. Directories:"
-      find /tmp/generic_pack_base -type d -printf '  - %P\n'
-      exit 1
+    isDebugging && [ -f "$sum_file}" ] && cat "$sum_file"
+
+    log "Checking if generic packs are up to date"
+    if isTrue "${SKIP_GENERIC_PACK_UPDATE_CHECK:-false}" && [ -f "$sum_file" ]; then
+      log "Skipping generic pack update check"
+    elif isTrue "${FORCE_GENERIC_PACK_UPDATE}" || ! checkSum "${sum_file}"; then
+      log "Generic pack(s) are out of date. Re-applying..."
+
+      original_base_dir=/data/.tmp/generic_pack_base
+      base_dir=$original_base_dir
+      rm -rf "${base_dir}"
+      mkdir -p "${base_dir}"
+      for pack in "${packFiles[@]}"; do
+        isDebugging && ls -l "${pack}"
+        extract "${pack}" "${base_dir}"
+      done
+
+      # recalculate the actual base directory of content
+      if ! base_dir=$(mc-image-helper find \
+          --max-depth=3 --type=directory --name=mods,plugins,config \
+          --only-shallowest --fail-no-matches --format '%h' \
+          "$base_dir"); then
+        log "ERROR: Unable to find content base of generic packs ${GENERIC_PACKS}. Directories:"
+        mc-image-helper find --name=* --max-depth=3 --type=directory --format '- %P' "$original_base_dir"
+        exit 1
+      fi
+
+      if [ -f /data/manifest.txt ]; then
+        log "Manifest exists from older generic pack, cleaning up ..."
+        while read -r f; do
+          rm -rf "/data/${f}"
+        done < /data/manifest.txt
+        # prune empty dirs
+        find /data -mindepth 1 -depth -type d -empty -delete
+        rm -f /data/manifest.txt
+      fi
+
+      log "Writing generic pack manifest ... "
+      find "${base_dir}" -type f -printf "%P\n" > /data/manifest.txt
+
+      log "Applying generic pack ..."
+      cp -R -f "${base_dir}"/* /data
+      rm -rf $original_base_dir
+
+      log "Saving generic pack(s) checksum"
+      sha1sum "${packFiles[@]}" > "${sum_file}"
+      isDebugging && cat "$sum_file"
     fi
-
-    if [ -f /data/manifest.txt ]; then
-      log "Manifest exists from older generic pack, cleaning up ..."
-      while read -r f; do
-        rm -rf "/data/${f}"
-      done < /data/manifest.txt
-      # prune empty dirs
-      find /data -mindepth 1 -depth -type d -empty -delete
-      rm -f /data/manifest.txt
-    fi
-
-    log "Writing generic pack manifest ... "
-    find "${base_dir}" -type f -printf "%P\n" > /data/manifest.txt
-
-    log "Applying generic pack ..."
-    cp -R -f "${base_dir}"/* /data
-    rm -rf /tmp/generic_pack_base
-
-    log "Saving generic pack(s) checksum"
-    sha1sum "${packFiles[@]}" > "${sum_file}"
-    isDebugging && cat "$sum_file"
   fi
-fi
+}
+
+function modrinthProjects() {
+  : "${MODRINTH_PROJECTS:=}"
+  : "${MODRINTH_DOWNLOAD_OPTIONAL_DEPENDENCIES:=true}"
+  : "${MODRINTH_ALLOWED_VERSION_TYPE:=release}"
+
+  if [[ $MODRINTH_PROJECTS ]] && isFamily HYBRID FABRIC; then
+    if [[ ${FAMILY^^} = HYBRID ]]; then
+      loader=forge
+    else
+      loader="${FAMILY,,}"
+    fi
+    mc-image-helper modrinth \
+      --output-directory=/data \
+      --projects="${MODRINTH_PROJECTS}" \
+      --game-version="${VANILLA_VERSION}" \
+      --loader="$loader" \
+      --download-optional-dependencies="$MODRINTH_DOWNLOAD_OPTIONAL_DEPENDENCIES" \
+      --allowed-version-type="$MODRINTH_ALLOWED_VERSION_TYPE"
+  fi
+}
+
+genericPacks
+
+modrinthProjects
 
 exec "${SCRIPTS:-/}start-setupModconfig" "$@"
